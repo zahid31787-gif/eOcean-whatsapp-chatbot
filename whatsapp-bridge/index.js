@@ -201,8 +201,11 @@ async function sendToExistingN8n(msg, message) {
 }
 
 client.on('qr', (qr) => {
-  console.log('Scan this QR code using WhatsApp:');
-  qrcode.generate(qr, { small: true });
+  console.log('\nScan this QR code using WhatsApp:\n');
+  qrcode.generate(qr, {
+    small: true,
+    errorCorrectionLevel: 'L'
+  });
 });
 client.on('authenticated', () => console.log('WhatsApp authenticated.'));
 client.on('ready', () => console.log('Eocean WhatsApp Assistant is ready!'));
