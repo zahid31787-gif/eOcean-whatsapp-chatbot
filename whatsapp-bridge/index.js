@@ -2,6 +2,28 @@
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { execFileSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+// Remove stale Chromium singleton locks.
+// Run only when no other instance is using this WhatsApp profile.
+const chromeProfile = path.join(
+  '/app/.wwebjs_auth',
+  'session-eocean-assistant'
+);
+
+for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+  const lockPath = path.join(chromeProfile, lock);
+
+  try {
+    fs.unlinkSync(lockPath);
+    console.log(`Removed stale Chromium lock: ${lock}`);
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+}
 
 const WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
