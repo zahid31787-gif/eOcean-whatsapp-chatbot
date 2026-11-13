@@ -1,18 +1,156 @@
-﻿
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
+﻿const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+require('dotenv').config();
+
+const QRCode = require('qrcode');
+const http = require('http');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-// Remove stale Chromium singleton locks.
+// ==========================================
+// 1. RAILWAY QR WEBPAGE SERVER
+// ==========================================
+
+let latestQR = null;
+
+const PORT = process.env.PORT || 3000;
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://localhost');
+
+  // Health check
+  if (url.pathname === '/') {
+    res.writeHead(200, {
+      'Content-Type': 'text/plain',
+      'Cache-Control': 'no-store'
+    });
+
+    return res.end('Eocean WhatsApp Assistant is running!');
+  }
+
+  // QR webpage
+  if (url.pathname === '/qr') {
+    const token = process.env.QR_VIEW_TOKEN;
+
+    if (!token || url.searchParams.get('key') !== token) {
+      res.writeHead(403, {
+        'Content-Type': 'text/plain'
+      });
+
+      return res.end('Access denied. Check your QR access token.');
+    }
+
+    // Wait for WhatsApp to generate QR
+    if (!latestQR) {
+      res.writeHead(200, {
+        'Content-Type': 'text/html',
+        'Cache-Control': 'no-store'
+      });
+
+      return res.end(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <meta http-equiv="refresh" content="5">
+          <title>Eocean WhatsApp QR</title>
+        </head>
+        <body style="font-family:Arial;text-align:center;padding:30px">
+          <h2>Waiting for WhatsApp QR code...</h2>
+          <p>This page will refresh automatically.</p>
+        </body>
+        </html>
+      `);
+    }
+
+    try {
+      const qrImage = await QRCode.toDataURL(latestQR, {
+        width: 400,
+        margin: 3,
+        errorCorrectionLevel: 'M'
+      });
+
+      res.writeHead(200, {
+        'Content-Type': 'text/html',
+        'Cache-Control': 'no-store'
+      });
+
+      return res.end(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <meta http-equiv="refresh" content="15">
+          <title>Eocean WhatsApp QR</title>
+        </head>
+
+        <body style="
+          font-family:Arial,sans-serif;
+          text-align:center;
+          padding:20px;
+          background:#f5f5f5;
+        ">
+
+          <h2>Eocean WhatsApp Assistant</h2>
+
+          <p>Open WhatsApp on your phone and scan this QR code.</p>
+
+          <div style="
+            background:white;
+            display:inline-block;
+            padding:15px;
+            border-radius:12px;
+          ">
+            <img
+              src="${qrImage}"
+              alt="WhatsApp QR Code"
+              style="width:min(400px,85vw);height:auto"
+            >
+          </div>
+
+          <p>Keep this page open while scanning.</p>
+          <p>QR refreshes automatically every 15 seconds.</p>
+
+        </body>
+        </html>
+      `);
+
+    } catch (error) {
+      console.error('QR generation error:', error.message);
+
+      res.writeHead(500);
+      return res.end('Could not generate QR code.');
+    }
+  }
+
+  res.writeHead(404);
+  res.end('Page not found.');
+});
+
+// Start HTTP server for Railway
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`QR webpage server running on port ${PORT}`);
+});
+
+server.on('error', (error) => {
+  console.error('HTTP server error:', error);
+});
+
+// ==========================================
+// 2. REMOVE STALE CHROMIUM LOCKS
+// ==========================================
+
 // Run only when no other instance is using this WhatsApp profile.
 const chromeProfile = path.join(
   '/app/.wwebjs_auth',
   'session-eocean-assistant'
 );
 
-for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+for (const lock of [
+  'SingletonLock',
+  'SingletonSocket',
+  'SingletonCookie'
+]) {
   const lockPath = path.join(chromeProfile, lock);
 
   try {
@@ -25,28 +163,56 @@ for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
   }
 }
 
+// ==========================================
+// 3. ENVIRONMENT VARIABLES
+// ==========================================
+
 const WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const TEAM_NUMBER = process.env.TEAM_NUMBER;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-if (!WEBHOOK_URL) throw new Error('N8N_WEBHOOK_URL is missing.');
-if (!WEBHOOK_SECRET) throw new Error('WEBHOOK_SECRET is missing.');
+if (!WEBHOOK_URL) {
+  throw new Error('N8N_WEBHOOK_URL is missing.');
+}
 
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const TRANSCRIPTION_MODEL = process.env.GEMINI_TRANSCRIPTION_MODEL || 'gemini-2.5-flash';
-const TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
-const TTS_VOICE = process.env.GEMINI_TTS_VOICE || 'Kore';
+if (!WEBHOOK_SECRET) {
+  throw new Error('WEBHOOK_SECRET is missing.');
+}
 
-// WhatsApp client configuration
+const GEMINI_BASE =
+  'https://generativelanguage.googleapis.com/v1beta/models';
+
+const TRANSCRIPTION_MODEL =
+  process.env.GEMINI_TRANSCRIPTION_MODEL || 'gemini-2.5-flash';
+
+const TTS_MODEL =
+  process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
+
+const TTS_VOICE =
+  process.env.GEMINI_TTS_VOICE || 'Kore';
+
+// ==========================================
+// 4. WHATSAPP CLIENT
+// ==========================================
+
 const client = new Client({
   authStrategy: new LocalAuth({
     clientId: 'eocean-assistant',
     dataPath: '/app/.wwebjs_auth'
   }),
+
   puppeteer: {
     headless: true,
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+
+    executablePath:
+      process.env.PUPPETEER_EXECUTABLE_PATH ||
+      (
+        process.platform === 'win32'
+          ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+          : '/usr/bin/chromium'
+      ),
+
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -59,21 +225,39 @@ const client = new Client({
   }
 });
 
-// Gemini API
+// ==========================================
+// 5. GEMINI API
+// ==========================================
+
 async function geminiGenerate(model, contents, generationConfig) {
   if (!GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is missing. Add it to enable voice features.');
+    throw new Error(
+      'GEMINI_API_KEY is missing. Add it to enable voice features.'
+    );
   }
 
   const response = await fetch(
     `${GEMINI_BASE}/${model}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+
+      headers: {
+        'Content-Type': 'application/json'
+      },
+
       body: JSON.stringify({
-        contents: [{ role: 'user', parts: contents }],
-        ...(generationConfig ? { generationConfig } : {})
+        contents: [
+          {
+            role: 'user',
+            parts: contents
+          }
+        ],
+
+        ...(generationConfig
+          ? { generationConfig }
+          : {})
       }),
+
       signal: AbortSignal.timeout(90000)
     }
   );
@@ -81,7 +265,9 @@ async function geminiGenerate(model, contents, generationConfig) {
   const raw = await response.text();
 
   if (!response.ok) {
-    throw new Error(`Gemini ${model} HTTP ${response.status}: ${raw.slice(0, 500)}`);
+    throw new Error(
+      `Gemini ${model} HTTP ${response.status}: ${raw.slice(0, 500)}`
+    );
   }
 
   let data;
@@ -95,7 +281,10 @@ async function geminiGenerate(model, contents, generationConfig) {
   return data;
 }
 
-// Convert incoming WhatsApp voice note into text
+// ==========================================
+// 6. TRANSCRIBE WHATSAPP VOICE NOTES
+// ==========================================
+
 async function transcribeVoiceNote(msg) {
   const media = await msg.downloadMedia();
 
@@ -110,7 +299,9 @@ async function transcribeVoiceNote(msg) {
   }
 
   if (audio.length > 18 * 1024 * 1024) {
-    throw new Error('Voice note is too large for inline Gemini processing (limit: 18 MB).');
+    throw new Error(
+      'Voice note is too large for inline Gemini processing (limit: 18 MB).'
+    );
   }
 
   const mimeType = (media.mimetype || 'audio/ogg')
@@ -122,8 +313,10 @@ async function transcribeVoiceNote(msg) {
     TRANSCRIPTION_MODEL,
     [
       {
-        text: 'Transcribe the spoken words exactly. Preserve the original language and script. Support English, Urdu, and mixed Urdu-English/Roman Urdu. Do not translate, summarize, answer the speaker, or add commentary. Return only the transcript.'
+        text:
+          'Transcribe the spoken words exactly. Preserve the original language and script. Support English, Urdu, and mixed Urdu-English/Roman Urdu. Do not translate, summarize, answer the speaker, or add commentary. Return only the transcript.'
       },
+
       {
         inline_data: {
           mime_type: mimeType,
@@ -137,7 +330,9 @@ async function transcribeVoiceNote(msg) {
     }
   );
 
-  const transcript = (result.candidates?.[0]?.content?.parts || [])
+  const transcript = (
+    result.candidates?.[0]?.content?.parts || []
+  )
     .map(part => part.text || '')
     .join('')
     .trim();
@@ -149,7 +344,10 @@ async function transcribeVoiceNote(msg) {
   return transcript;
 }
 
-// Generate spoken reply using Gemini TTS
+// ==========================================
+// 7. GENERATE GEMINI VOICE REPLY
+// ==========================================
+
 async function createVoiceReply(text) {
   const result = await geminiGenerate(
     TTS_MODEL,
@@ -162,6 +360,7 @@ ${text}`
     ],
     {
       responseModalities: ['AUDIO'],
+
       speechConfig: {
         voiceConfig: {
           prebuiltVoiceConfig: {
@@ -172,10 +371,15 @@ ${text}`
     }
   );
 
-  const audioPart = (result.candidates?.[0]?.content?.parts || [])
-    .find(part => part.inlineData?.data || part.inline_data?.data);
+  const audioPart = (
+    result.candidates?.[0]?.content?.parts || []
+  ).find(
+    part => part.inlineData?.data || part.inline_data?.data
+  );
 
-  const audioData = audioPart?.inlineData?.data || audioPart?.inline_data?.data;
+  const audioData =
+    audioPart?.inlineData?.data ||
+    audioPart?.inline_data?.data;
 
   if (!audioData) {
     throw new Error('Gemini TTS did not return audio data.');
@@ -183,7 +387,7 @@ ${text}`
 
   const pcm = Buffer.from(audioData, 'base64');
 
-  // Convert 24 kHz PCM audio into OGG/Opus for WhatsApp
+  // Convert PCM audio into OGG/Opus for WhatsApp
   const ogg = execFileSync(
     'ffmpeg',
     [
@@ -218,20 +422,31 @@ ${text}`
   );
 }
 
-// Notify team about customer interaction
+// ==========================================
+// 8. NOTIFY TEAM
+// ==========================================
+
 async function notifyTeam(msg, message, reply) {
   try {
     if (!TEAM_NUMBER) {
-      console.warn('TEAM_NUMBER is not configured; skipping team notification.');
+      console.warn(
+        'TEAM_NUMBER is not configured; skipping team notification.'
+      );
+
       return;
     }
 
     const contact = await msg.getContact();
-    const name = contact.pushname || contact.name || 'Unknown';
-    const number = contact.number ? '+' + contact.number : msg.from;
+
+    const name =
+      contact.pushname || contact.name || 'Unknown';
+
+    const number =
+      contact.number ? '+' + contact.number : msg.from;
 
     await client.sendMessage(
       TEAM_NUMBER + '@c.us',
+
       'New eOcean customer request\n\n' +
       'Name: ' + name + '\n' +
       'Number: ' + number + '\n' +
@@ -241,31 +456,40 @@ async function notifyTeam(msg, message, reply) {
     );
 
     console.log('Team notified about:', msg.from);
+
   } catch (e) {
     console.error('Team alert failed:', e.message);
   }
 }
 
-// Send text or transcribed voice message to existing n8n workflow
+// ==========================================
+// 9. SEND MESSAGE TO EXISTING N8N WORKFLOW
+// ==========================================
+
 async function sendToExistingN8n(msg, message) {
   const response = await fetch(WEBHOOK_URL, {
     method: 'POST',
+
     headers: {
       'Content-Type': 'application/json',
       'x-webhook-secret': WEBHOOK_SECRET
     },
+
     body: JSON.stringify({
       from: msg.from,
       message,
       messageId: msg.id._serialized
     }),
+
     signal: AbortSignal.timeout(90000)
   });
 
   const responseText = await response.text();
 
   if (!response.ok) {
-    throw new Error(`n8n HTTP ${response.status}: ${responseText.slice(0, 300)}`);
+    throw new Error(
+      `n8n HTTP ${response.status}: ${responseText.slice(0, 300)}`
+    );
   }
 
   let result;
@@ -277,32 +501,45 @@ async function sendToExistingN8n(msg, message) {
   }
 
   if (result.success === false) {
-    throw new Error('n8n reported that message processing failed.');
+    throw new Error(
+      'n8n reported that message processing failed.'
+    );
   }
 
-  if (typeof result.reply !== 'string' || !result.reply.trim()) {
-    throw new Error('n8n response does not contain a valid reply.');
+  if (
+    typeof result.reply !== 'string' ||
+    !result.reply.trim()
+  ) {
+    throw new Error(
+      'n8n response does not contain a valid reply.'
+    );
   }
 
   return result;
 }
 
-// Display WhatsApp QR code
-client.on('qr', (qr) => {
-  console.log('\nScan this QR code using WhatsApp:\n');
+// ==========================================
+// 10. WHATSAPP QR EVENT
+// ==========================================
 
-  qrcode.generate(qr, {
-    small: true,
-    errorCorrectionLevel: 'L'
-  });
+client.on('qr', (qr) => {
+  latestQR = qr;
+
+  console.log('New WhatsApp QR received.');
+  console.log('Open your Railway domain followed by /qr');
 });
 
-// WhatsApp connection events
+// ==========================================
+// 11. WHATSAPP CONNECTION EVENTS
+// ==========================================
+
 client.on('authenticated', () => {
   console.log('WhatsApp authenticated.');
 });
 
 client.on('ready', () => {
+  latestQR = null;
+
   console.log('Eocean WhatsApp Assistant is ready!');
 });
 
@@ -314,7 +551,10 @@ client.on('disconnected', (reason) => {
   console.log('WhatsApp disconnected:', reason);
 });
 
-// Handle incoming WhatsApp messages
+// ==========================================
+// 12. HANDLE INCOMING WHATSAPP MESSAGES
+// ==========================================
+
 client.on('message', async (msg) => {
   try {
     if (
@@ -326,17 +566,22 @@ client.on('message', async (msg) => {
     }
 
     const isVoiceNote =
-      msg.hasMedia && (msg.type === 'ptt' || msg.type === 'audio');
+      msg.hasMedia &&
+      (msg.type === 'ptt' || msg.type === 'audio');
 
     let customerMessage;
 
     // Transcribe voice notes
     if (isVoiceNote) {
-      console.log('Incoming WhatsApp voice note from:', msg.from);
+      console.log(
+        'Incoming WhatsApp voice note from:',
+        msg.from
+      );
 
       customerMessage = await transcribeVoiceNote(msg);
 
       console.log('Voice-note transcript:', customerMessage);
+
     } else {
       customerMessage = (msg.body || '').trim();
 
@@ -345,15 +590,21 @@ client.on('message', async (msg) => {
       console.log('Incoming message from:', msg.from);
     }
 
-    // Send both text and transcribed voice messages to the same n8n workflow
-    const result = await sendToExistingN8n(msg, customerMessage);
+    // Send message to existing n8n workflow
+    const result = await sendToExistingN8n(
+      msg,
+      customerMessage
+    );
 
     const reply = result.reply.trim();
 
     // Send text reply
     await msg.reply(reply);
 
-    console.log('Text reply successfully sent to:', msg.from);
+    console.log(
+      'Text reply successfully sent to:',
+      msg.from
+    );
 
     // Send additional voice reply only for voice-note inputs
     if (isVoiceNote) {
@@ -363,10 +614,16 @@ client.on('message', async (msg) => {
         await client.sendMessage(
           msg.from,
           voiceMedia,
-          { sendAudioAsVoice: true }
+          {
+            sendAudioAsVoice: true
+          }
         );
 
-        console.log('Voice reply successfully sent to:', msg.from);
+        console.log(
+          'Voice reply successfully sent to:',
+          msg.from
+        );
+
       } catch (voiceError) {
         console.error(
           'Voice reply failed (text reply was already sent):',
@@ -377,18 +634,32 @@ client.on('message', async (msg) => {
 
     // Notify team when requested by n8n
     if (result.notify === true) {
-      await notifyTeam(msg, customerMessage, reply);
+      await notifyTeam(
+        msg,
+        customerMessage,
+        reply
+      );
     }
 
   } catch (error) {
-    console.error('Message processing error:', error.message);
+    console.error(
+      'Message processing error:',
+      error.message
+    );
   }
 });
 
-// Initialize WhatsApp
+// ==========================================
+// 13. START WHATSAPP
+// ==========================================
+
 console.log('Starting Eocean WhatsApp Assistant...');
 
 client.initialize().catch((error) => {
-  console.error('WhatsApp initialization failed:', error);
+  console.error(
+    'WhatsApp initialization failed:',
+    error
+  );
+
   process.exit(1);
 });
