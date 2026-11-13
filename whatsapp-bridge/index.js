@@ -18,13 +18,18 @@ const TTS_VOICE = process.env.GEMINI_TTS_VOICE || 'Kore';
 
 const client = new Client({
   authStrategy: new LocalAuth({ clientId: 'eocean-assistant' }),
-  puppeteer: {
-    headless: true,
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  }
+ puppeteer: {
+  headless: true,
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--no-zygote'
+  ]
+}
 });
-
 async function geminiGenerate(model, contents, generationConfig) {
 
   // Check API key only when a voice feature uses Gemini
