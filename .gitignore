@@ -1,0 +1,25 @@
+.env
+.env.*
+!.env.example
+
+# Node dependencies
+**/node_modules/
+
+# WhatsApp authentication and cache
+**/.wwebjs_auth*/
+**/.wwebjs_cache/
+
+# Logs
+logs/
+*.log
+
+# Company data - do not upload
+documents/
+extracted-text/
+knowledge-base/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
