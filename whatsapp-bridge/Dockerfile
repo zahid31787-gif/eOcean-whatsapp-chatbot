@@ -1,11 +1,12 @@
-
+@'
 FROM node:24-bookworm-slim
 
 WORKDIR /app
 
-# Install Chromium and required libraries
+# Install Chromium, FFmpeg and required libraries
 RUN apt-get update && apt-get install -y \
     chromium \
+    ffmpeg \
     ca-certificates \
     fonts-liberation \
     libasound2 \
@@ -40,3 +41,4 @@ RUN npm ci --omit=dev
 COPY . .
 
 CMD ["npm", "start"]
+'@ | Set-Content -Encoding utf8 .\Dockerfile
