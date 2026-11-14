@@ -203,7 +203,8 @@ const client = new Client({
   }),
 
   puppeteer: {
-    headless: true,
+  headless: true,
+  protocolTimeout: 180000,
 
     executablePath:
       process.env.PUPPETEER_EXECUTABLE_PATH ||
@@ -557,6 +558,13 @@ client.on('disconnected', (reason) => {
 
 client.on('message', async (msg) => {
   try {
+    console.log('MESSAGE EVENT RECEIVED:', {
+      from: msg.from,
+      fromMe: msg.fromMe,
+      type: msg.type
+    });
+
+
     if (
       msg.fromMe ||
       msg.from.endsWith('@g.us') ||
