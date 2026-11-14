@@ -555,7 +555,14 @@ client.on('disconnected', (reason) => {
 // ==========================================
 // 12. HANDLE INCOMING WHATSAPP MESSAGES
 // ==========================================
-
+client.on('message_create', (msg) => {
+  console.log('MESSAGE_CREATE EVENT:', {
+    from: msg.from,
+    fromMe: msg.fromMe,
+    type: msg.type,
+    body: msg.body
+  });
+});
 client.on('message', async (msg) => {
   try {
     console.log('MESSAGE EVENT RECEIVED:', {
